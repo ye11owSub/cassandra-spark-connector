@@ -212,6 +212,14 @@ package object cassandra {
       writeTime(Column(column))
   }
 
+  def token(columns: Column*): Column = {
+    Column(CassandraToken(columns.map(_.expr)))
+  }
+
+  def token(column: String, otherColumns: String*): Column = {
+    token((column +: otherColumns).map(new Column(_)): _*)
+  }
+
   implicit class CassandraSparkSessionFunctions(val sparkSession: SparkSession) extends AnyVal {
 
     import org.apache.spark.sql.cassandra.CassandraSQLContextParams._

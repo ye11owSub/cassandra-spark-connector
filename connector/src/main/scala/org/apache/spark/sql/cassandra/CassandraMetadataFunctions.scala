@@ -19,6 +19,8 @@
 package org.apache.spark.sql.cassandra
 
 import com.datastax.spark.connector.datasource.CassandraTable
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, ExprCode, CodegenFallback}
 import org.apache.spark.sql.catalyst.FunctionIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Expression, ExpressionInfo, UnaryExpression, Unevaluable}
@@ -66,6 +68,31 @@ case class CassandraWriteTime(child: Expression) extends CassandraMetadataFuncti
   override protected def withNewChildInternal(newChild: Expression): CassandraWriteTime = copy(child = newChild)
 }
 
+case class CassandraToken(children: Seq[Expression]) extends Expression with CodegenFallback {
+
+  override def nullable: Boolean = false
+
+  override def dataType: DataType = LongType
+
+  override def foldable: Boolean = false
+
+  override def prettyName: String = "token"
+
+  override def sql: String = s"TOKEN(${children.map(_.sql).mkString(", ")})"
+
+  override def toString: String = sql
+
+    override def eval(input: InternalRow): Any =
+    throw new UnsupportedOperationException(
+      "CassandraToken is only used for pushdown and must not be evaluated"
+    )
+
+  override protected def withNewChildrenInternal(
+      newChildren: IndexedSeq[Expression]): Expression = {
+    copy(children = newChildren)
+  }
+}
+
 object CassandraMetadataFunction {
 
   def registerMetadataFunctions(session: SparkSession): Unit = {
@@ -76,6 +103,10 @@ object CassandraMetadataFunction {
     session.sessionState.functionRegistry.registerFunction(
       FunctionIdentifier("writetime"),
       writeTimeBuilder,
+    "")
+    session.sessionState.functionRegistry.registerFunction(
+      FunctionIdentifier("token"),
+      tokenBuilder,
     "")
   }
 
@@ -109,6 +140,25 @@ object CassandraMetadataFunction {
         s" given $args")
     }
     CassandraWriteTime(args.head)
+  }
+
+  private val tokenBuilder: Seq[Expression] => Expression = (input: Seq[Expression]) =>
+    CassandraMetadataFunction.cassandraTokenFunctionBuilder(input)
+
+  def cassandraTokenFunctionBuilder(args: Seq[Expression]): Expression = {
+    if (args.isEmpty)
+      throw new AnalysisException("token function requires at least one argument")
+    CassandraToken(args)
+  }
+
+  def cassandraTokenFunctionDescriptor: (FunctionIdentifier, ExpressionInfo, Seq[Expression] => Expression) = {
+    val name = "token"
+    val info = new ExpressionInfo(
+      classOf[CassandraToken].getCanonicalName,
+      name,
+      s"$name(column1, column2, ...) - returns partitioner token for the given partition key"
+    )
+    (FunctionIdentifier(name), info, cassandraTokenFunctionBuilder)
   }
 }
 
